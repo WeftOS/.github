@@ -1,0 +1,55 @@
+# Keeps the facts block of profile/README.md current.
+#
+# Triggers:
+#   - daily schedule (covers everything, including a missed dispatch)
+#   - repository_dispatch type "weftos-release", sent by WeftOS/weftos after a release
+#   - manual run
+#
+# Uses only the default GITHUB_TOKEN with contents: write, in this repository.
+name: refresh-profile
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  repository_dispatch:
+    types: [weftos-release]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-profile
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Update the facts block
+        run: |
+          # The site may not serve facts.json yet; skip rather than fail.
+          if ! node scripts/update-profile.mjs; then
+            echo "::notice::facts.json not reachable; profile left unchanged"
+          fi
+      - name: Commit and tag if changed
+        run: |
+          if git diff --quiet -- profile/README.md; then
+            echo "No change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add profile/README.md
+          git commit -m "chore(profile): refresh facts"
+          # Every change to main carries a vYYYY.MM.DD.N tag.
+          day="v$(date -u +%Y.%m.%d)"
+          n=$(( $(git tag -l "${day}.*" | wc -l) + 1 ))
+          git tag "${day}.${n}"
+          git push origin HEAD "${day}.${n}"
